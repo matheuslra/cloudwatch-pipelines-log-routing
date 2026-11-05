@@ -1,0 +1,26 @@
+# Parses a JSON envelope, runs Grok on the line inside it, then routes on the fields Grok produced.
+# The conditions don't overlap, so each event has one possible route.
+# scripts/pipeline.py replaces SOURCE_ROLE_ARN with your role.
+pipeline:
+  source:
+    cloudwatch_logs:
+      aws:
+        sts_role_arn: "SOURCE_ROLE_ARN"
+      log_event_metadata:
+        data_source_name: "checkout"
+        data_source_type: "default"
+  processor:
+    - parse_json: {}
+    - grok:
+        match:
+          log: ["%{WORD:level} %{WORD:component} %{GREEDYDATA:msg}"]
+  sink:
+    - cloudwatch_logs:
+        log_group: "/sample/checkout/audit"
+        when: 'component == "auth"'
+    - cloudwatch_logs:
+        log_group: "/sample/checkout/errors"
+        when: 'level == "ERROR" and component != "auth"'
+    - cloudwatch_logs:
+        log_group: "/sample/checkout/debug"
+        is_default: true

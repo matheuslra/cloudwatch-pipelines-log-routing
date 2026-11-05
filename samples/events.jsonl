@@ -1,0 +1,4 @@
+{"log":"INFO auth user signed in","stream":"stdout","pod":"checkout-1"}
+{"log":"ERROR payment card declined by processor","stream":"stderr","pod":"checkout-1"}
+{"log":"ERROR auth too many failed sign-ins","stream":"stderr","pod":"checkout-2"}
+{"log":"DEBUG cart recalculated totals","stream":"stdout","pod":"checkout-2"}
