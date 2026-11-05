@@ -62,25 +62,13 @@ The caller needs `iam:PassRole` for the role and `logs:PutPipelineRule`. To remo
 - With a CloudWatch Logs source, `parse_json` rejects a `source` field, so this config uses `parse_json: {}`.
 - The chain passes validation even though the [processor compatibility page](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/processor-compatibility.html) says parsers must come first.
 
-## Security checks
-
-The `Security` workflow runs on every push to `main`, on pull requests, weekly, and on demand. None of its jobs needs an API key or AWS access.
-
-- **Secret scan:** gitleaks checks the full git history on every run.
-- **Code scan:** CodeQL checks the Python code and the GitHub Actions workflows, and fails on any finding. It doesn't read the shell scripts.
-- **Smoke test:** runs `./local/smoke-test.sh`.
-
-Changes are also reviewed with Claude Code's [`/security-review`](https://support.claude.com/en/articles/11932705-automated-security-reviews-in-claude-code) before they're pushed.
-
-These checks add to human review and don't replace it. They can't tell you the sample is safe for your environment.
-
 ## Learn more
 
 - [Route logs to multiple log groups](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/pipeline-sinks.html#cloudwatch-logs-sink-routing)
 - [Pipeline IAM reference](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/pipeline-iam-reference.html)
 - [What's New announcement](https://aws.amazon.com/about-aws/whats-new/2026/10/cloudwatch-pipelines-log-routing/)
 
-This is sample code for learning, not an official AWS project.
+This is sample code for learning, not an official AWS project. Review it before you use it in your environment.
 
 ## License
 
