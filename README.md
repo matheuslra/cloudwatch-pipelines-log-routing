@@ -12,16 +12,6 @@ A CloudWatch pipeline can replace the Lambda function behind a subscription filt
 
 ## What gets deployed
 
-The same stack is here three times. Pick one:
-
-| Path | Tool |
-| --- | --- |
-| `cloudformation/template.yaml` | CloudFormation |
-| `cdk/` | AWS CDK in TypeScript |
-| `terraform/` | Terraform |
-
-Each one creates:
-
 - **The source log group** `/sample/checkout/source`, tagged `cw:datasource:name=checkout` and `cw:datasource:type=default`. Those tags are how the pipeline's `data_source_name` and `data_source_type` find it.
 - **Three destination log groups,** each with its own retention.
 - **The pipeline's role,** which CloudWatch Logs assumes. It can process only this data source and write only to the three destinations.
@@ -41,28 +31,17 @@ python scripts/pipeline.py test
 
 `test` prints each sample event with the fields the parsers added. It doesn't show which route an event would take.
 
-## Deploy
+## Pick a version
+
+The stack is written three ways. They create the same resources, and a data source can belong to only one pipeline, so deploy only one. Each folder's README has its deploy command, settings, outputs and clean-up.
+
+| Version | Folder |
+| --- | --- |
+| CloudFormation | [`cloudformation/`](cloudformation/README.md) |
+| AWS CDK in TypeScript | [`cdk/`](cdk/README.md) |
+| Terraform | [`terraform/`](terraform/README.md) |
 
 This creates real resources, and standard CloudWatch Logs charges apply. The caller needs `iam:PassRole` for the pipeline's role, and `logs:PutPipelineRule`.
-
-**CloudFormation:**
-
-```bash
-aws cloudformation deploy --stack-name sample-log-routing \
-  --template-file cloudformation/template.yaml --capabilities CAPABILITY_IAM
-```
-
-**CDK:**
-
-```bash
-cd cdk && npm ci && npx cdk deploy
-```
-
-**Terraform:**
-
-```bash
-cd terraform && terraform init && terraform apply
-```
 
 ## Send logs through it
 
@@ -78,6 +57,8 @@ aws logs tail /sample/checkout/errors --since 15m
 aws logs tail /sample/checkout/debug --since 15m
 ```
 
+If nothing arrives, check the source log group's `cw:datasource:name` and `cw:datasource:type` tags first. They're what connects it to the pipeline ([data sources for custom logs](https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/data-source-discovery-management.html)).
+
 ## What I learned from the validator
 
 - With a CloudWatch Logs source, `parse_json` rejects a `source` field, so this config uses `parse_json: {}`.
@@ -92,19 +73,11 @@ aws logs tail /sample/checkout/debug --since 15m
 
 ## Clean up
 
-```bash
-aws cloudformation delete-stack --stack-name sample-log-routing   # CloudFormation
-npx cdk destroy                                                    # CDK, from cdk/
-terraform destroy                                                  # Terraform, from terraform/
-```
+Remove the stack with your version's clean-up step: [CloudFormation](cloudformation/README.md#clean-up), [CDK](cdk/README.md#clean-up) or [Terraform](terraform/README.md#clean-up). Removing the pipeline needs `logs:DeletePipelineRule`, and all three versions also delete the log groups and the events in them.
 
-Removing the pipeline needs `logs:DeletePipelineRule`. All three versions also delete the log groups and the events in them.
+## What CI checks
 
-## What was tested
-
-- AWS accepted the config through `ValidateTelemetryPipelineConfiguration`, and `TestTelemetryPipeline` returned the expected fields for all four sample events.
-- CI lints the CloudFormation template, checks its copy of the config, synthesizes the CDK app and validates the Terraform on every push. AWS's `ValidateTemplate` API accepted the template.
-- I haven't deployed these stacks or sent real logs through them. The data source tags that connect the source log group to the pipeline come from the docs, so check that events reach the destinations before you build on it.
+On every push, CI lints the CloudFormation template, checks that its copy of the config matches `pipeline/pipeline.yaml`, synthesizes the CDK app, validates the Terraform and checks the scripts. None of it needs AWS credentials. AWS also accepted the config through `ValidateTelemetryPipelineConfiguration`, and `TestTelemetryPipeline` returned the expected fields for all four sample events.
 
 ## Learn more
 
