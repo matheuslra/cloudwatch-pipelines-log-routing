@@ -1,6 +1,7 @@
 # Parses a JSON envelope, runs Grok on the line inside it, then routes on the fields Grok produced.
 # The conditions don't overlap, so each event has one possible route.
-# scripts/pipeline.py replaces SOURCE_ROLE_ARN with your role.
+# The CDK app, the Terraform and scripts/pipeline.py swap the sts_role_arn placeholder for the pipeline's role.
+# cloudformation/template.yaml has its own copy of this config, and CI checks the two match.
 pipeline:
   source:
     cloudwatch_logs:

@@ -1,0 +1,110 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  A CloudWatch pipeline that parses a JSON envelope, runs Grok on the line inside it,
+  and routes each event to a log group with its own retention
+
+Resources:
+  # The pipeline finds this log group through its data source tags, which match
+  # data_source_name and data_source_type in the pipeline below.
+  SourceLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /sample/checkout/source
+      RetentionInDays: 1
+      Tags:
+        - Key: cw:datasource:name
+          Value: checkout
+        - Key: cw:datasource:type
+          Value: default
+
+  AuditLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /sample/checkout/audit
+      RetentionInDays: 365
+
+  ErrorsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /sample/checkout/errors
+      RetentionInDays: 30
+
+  DebugLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /sample/checkout/debug
+      RetentionInDays: 7
+
+  PipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: logs.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: process-and-route
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Only for this data source, so the role can't process other log groups.
+              - Effect: Allow
+                Action: logs:ProcessWithPipeline
+                Resource:
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/sample/checkout/source
+                  - !GetAtt SourceLogGroup.Arn
+                Condition:
+                  StringEquals:
+                    aws:ResourceAccount: !Ref AWS::AccountId
+                    logs:data_source_name: checkout
+                    logs:data_source_type: default
+              # Routed destinations are authorized by this role, not by a log group resource policy.
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource:
+                  - !GetAtt AuditLogGroup.Arn
+                  - !GetAtt ErrorsLogGroup.Arn
+                  - !GetAtt DebugLogGroup.Arn
+
+  # The body matches pipeline/pipeline.yaml. CI fails if the two drift apart.
+  Pipeline:
+    Type: AWS::ObservabilityAdmin::TelemetryPipelines
+    DependsOn: [SourceLogGroup, AuditLogGroup, ErrorsLogGroup, DebugLogGroup]
+    Properties:
+      Name: sample-checkout-routing
+      Configuration:
+        Body: !Sub |
+          pipeline:
+            source:
+              cloudwatch_logs:
+                aws:
+                  sts_role_arn: "${PipelineRole.Arn}"
+                log_event_metadata:
+                  data_source_name: "checkout"
+                  data_source_type: "default"
+            processor:
+              - parse_json: {}
+              - grok:
+                  match:
+                    log: ["%{WORD:level} %{WORD:component} %{GREEDYDATA:msg}"]
+            sink:
+              - cloudwatch_logs:
+                  log_group: "/sample/checkout/audit"
+                  when: 'component == "auth"'
+              - cloudwatch_logs:
+                  log_group: "/sample/checkout/errors"
+                  when: 'level == "ERROR" and component != "auth"'
+              - cloudwatch_logs:
+                  log_group: "/sample/checkout/debug"
+                  is_default: true
+
+Outputs:
+  PipelineArn:
+    Value: !GetAtt Pipeline.Arn
+  PipelineRoleArn:
+    Value: !GetAtt PipelineRole.Arn

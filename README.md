@@ -10,28 +10,28 @@ A CloudWatch pipeline can replace the Lambda function behind a subscription filt
 | `level` is `ERROR`, any other component | `/sample/checkout/errors` | 30 days |
 | Everything else | `/sample/checkout/debug` | 7 days |
 
-## What's here
+## What gets deployed
 
-| Path | What it does |
+The same stack is here three times. Pick one:
+
+| Path | Tool |
 | --- | --- |
-| `pipeline/pipeline.yaml` | The pipeline: two parsers, three routes |
-| `infra/resources.yaml` | CloudFormation for the log groups and the pipeline's role |
-| `scripts/pipeline.py` | Validates, tests or creates the pipeline |
-| `local/check_config.py` | Offline check of limits, route fields and the expected route of each sample |
-| `samples/` | Sample events and the route each should take |
+| `cloudformation/template.yaml` | CloudFormation |
+| `cdk/` | AWS CDK in TypeScript |
+| `terraform/` | Terraform |
 
-## Try it with no AWS account
+Each one creates:
 
-```bash
-pip install -r local/requirements.txt
-./local/smoke-test.sh
-```
+- **The source log group** `/sample/checkout/source`, tagged `cw:datasource:name=checkout` and `cw:datasource:type=default`. Those tags are how the pipeline's `data_source_name` and `data_source_type` find it.
+- **Three destination log groups,** each with its own retention.
+- **The pipeline's role,** which CloudWatch Logs assumes. It can process only this data source and write only to the three destinations.
+- **The pipeline** `sample-checkout-routing`, from `pipeline/pipeline.yaml`. The CDK app and the Terraform read that file. CloudFormation can't read a file, so the template has a copy, and CI fails if the two drift apart.
 
-The offline check uses a small stand-in for Grok and the `when` syntax, so it only understands what this sample uses.
+A data source name and type can belong to only one pipeline, so deploy one version at a time.
 
-## Test it against AWS
+## Check the config first
 
-These two calls create nothing in your account:
+These two calls create nothing in your account. Run them whenever you change `pipeline/pipeline.yaml`:
 
 ```bash
 pip install -r scripts/requirements.txt
@@ -39,32 +39,77 @@ python scripts/pipeline.py validate
 python scripts/pipeline.py test
 ```
 
-`test` prints each event with the fields the parsers added. It doesn't show which route an event would take, which is why the offline check exists.
+`test` prints each sample event with the fields the parsers added. It doesn't show which route an event would take.
 
-## Create it
+## Deploy
 
-This creates real resources, and standard CloudWatch Logs charges apply.
+This creates real resources, and standard CloudWatch Logs charges apply. The caller needs `iam:PassRole` for the pipeline's role, and `logs:PutPipelineRule`.
+
+**CloudFormation:**
 
 ```bash
-aws cloudformation deploy --stack-name sample-log-routing --template-file infra/resources.yaml --capabilities CAPABILITY_IAM
-python scripts/pipeline.py create --role-arn <PipelineRoleArn output>
+aws cloudformation deploy --stack-name sample-log-routing \
+  --template-file cloudformation/template.yaml --capabilities CAPABILITY_IAM
 ```
 
-The caller needs `iam:PassRole` for the role and `logs:PutPipelineRule`. To remove everything, delete the pipeline and then the stack.
+**CDK:**
 
-## What was tested
+```bash
+cd cdk && npm ci && npx cdk deploy
+```
 
-- AWS accepted this config through `ValidateTelemetryPipelineConfiguration`, and `TestTelemetryPipeline` returned the expected fields for all four sample events.
-- I have not created this pipeline or sent real logs through it, so the routes and the role are untested end to end. I also haven't confirmed how a custom log group's events get matched to `data_source_name`, so check that first.
+**Terraform:**
+
+```bash
+cd terraform && terraform init && terraform apply
+```
+
+## Send logs through it
+
+```bash
+python scripts/send_sample_logs.py
+```
+
+It writes the four sample events to the source log group and prints the log group each one should land in. Then look at them:
+
+```bash
+aws logs tail /sample/checkout/audit --since 15m
+aws logs tail /sample/checkout/errors --since 15m
+aws logs tail /sample/checkout/debug --since 15m
+```
 
 ## What I learned from the validator
 
 - With a CloudWatch Logs source, `parse_json` rejects a `source` field, so this config uses `parse_json: {}`.
 - The chain passes validation even though the [processor compatibility page](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/processor-compatibility.html) says parsers must come first.
 
+## Before you use it
+
+- **Processors change the event permanently,** and the raw log isn't kept. If you need the original line for audit, plan for that before adding parsers.
+- **A pipeline allows up to 10 CloudWatch Logs sinks,** so design the route map with that limit in mind.
+- **Routing alone won't lower your bill.** CloudWatch Logs sources are metered before processing, so the savings come from shorter retention on the noisy groups.
+- **Keep credentials out of the config.** Pipeline definitions aren't encrypted with customer managed keys.
+
+## Clean up
+
+```bash
+aws cloudformation delete-stack --stack-name sample-log-routing   # CloudFormation
+npx cdk destroy                                                    # CDK, from cdk/
+terraform destroy                                                  # Terraform, from terraform/
+```
+
+Removing the pipeline needs `logs:DeletePipelineRule`. All three versions also delete the log groups and the events in them.
+
+## What was tested
+
+- AWS accepted the config through `ValidateTelemetryPipelineConfiguration`, and `TestTelemetryPipeline` returned the expected fields for all four sample events.
+- CI lints the CloudFormation template, checks its copy of the config, synthesizes the CDK app and validates the Terraform on every push. AWS's `ValidateTemplate` API accepted the template.
+- I haven't deployed these stacks or sent real logs through them. The data source tags that connect the source log group to the pipeline come from the docs, so check that events reach the destinations before you build on it.
+
 ## Learn more
 
 - [Route logs to multiple log groups](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/pipeline-sinks.html#cloudwatch-logs-sink-routing)
+- [Data sources for custom logs](https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/data-source-discovery-management.html)
 - [Pipeline IAM reference](https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/pipeline-iam-reference.html)
 - [What's New announcement](https://aws.amazon.com/about-aws/whats-new/2026/10/cloudwatch-pipelines-log-routing/)
 
